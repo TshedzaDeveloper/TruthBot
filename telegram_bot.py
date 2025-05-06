@@ -105,10 +105,13 @@ class TelegramBot:
             f"⚠️ <i>Trade at your own risk</i>"
         )
 
-    def run(self):
-        """Run the bot"""
-        self.application.run_polling()
+    async def start(self):
+        """Start the bot"""
+        await self.application.initialize()
+        await self.application.start()
+        await self.application.updater.start_polling()
 
-    def stop(self):
+    async def stop(self):
         """Stop the bot"""
-        self.application.stop() 
+        await self.application.stop()
+        await self.application.shutdown() 

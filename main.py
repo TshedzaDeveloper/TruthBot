@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import schedule
 import time
 from datetime import datetime
 from market_data import MarketDataHandler
@@ -15,6 +14,7 @@ class TruthBot:
         self.strategy = StrategyAnalyzer()
         self.telegram_bot = TelegramBot()
         self.last_analysis_time = {}
+        self.running = False
         
     def setup_logging(self):
         logging.basicConfig(
@@ -65,42 +65,47 @@ class TruthBot:
     async def run(self):
         """Run the bot"""
         try:
-            # Connect to market data
-            self.market_data.connect()
+            self.running = True
             
-            # Wait for market data connection
-            while not self.market_data.is_connected():
-                self.logger.info("Waiting for market data connection...")
-                await asyncio.sleep(1)
+            # Connect to market data
+            if not self.market_data.connect():
+                self.logger.error("Failed to connect to market data")
+                return
             
             self.logger.info("Market data connected successfully")
             
-            # Schedule market analysis
-            schedule.every(SCHEDULE_CONFIG['interval_minutes']).minutes.do(
-                lambda: asyncio.create_task(self.analyze_markets())
-            )
+            # Start Telegram bot
+            await self.telegram_bot.start()
+            self.logger.info("Telegram bot started successfully")
             
             # Run initial analysis
             await self.analyze_markets()
             
-            # Start Telegram bot
-            self.telegram_bot.run()
-            
-            # Keep the bot running
-            while True:
-                schedule.run_pending()
+            # Keep the bot running and analyze markets periodically
+            while self.running:
+                current_time = time.time()
+                for symbol in TRADING_PAIRS:
+                    if symbol not in self.last_analysis_time:
+                        await self.analyze_markets()
+                        break
+                    time_since_last = current_time - self.last_analysis_time[symbol]
+                    if time_since_last >= SCHEDULE_CONFIG['interval_minutes'] * 60:
+                        await self.analyze_markets()
+                        break
                 await asyncio.sleep(1)
                 
         except Exception as e:
             self.logger.error(f"Error running bot: {e}")
         finally:
-            self.cleanup()
+            await self.cleanup()
 
-    def cleanup(self):
+    async def cleanup(self):
         """Cleanup resources"""
         try:
+            self.running = False
             self.market_data.close()
-            self.telegram_bot.stop()
+            await self.telegram_bot.stop()
+            self.logger.info("Bot cleanup completed")
         except Exception as e:
             self.logger.error(f"Error during cleanup: {e}")
 
@@ -114,6 +119,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logging.info("Bot stopped by user")
     except Exception as e:
-        logging.error(f"Bot stopped due to error: {e}")
-    finally:
-        bot.cleanup() 
+        logging.error(f"Bot stopped due to error: {e}") 
