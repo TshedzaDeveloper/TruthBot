@@ -6,6 +6,7 @@ import logging
 from config import TRADING_PAIRS, MA_CONFIG
 import time
 from datetime import datetime, timedelta
+import traceback
 
 class MarketDataHandler:
     def __init__(self):
@@ -14,6 +15,12 @@ class MarketDataHandler:
         self.max_retries = 3
         self.retry_delay = 5  # seconds
         self.connected = False
+        self.symbol_mapping = {
+            '^NDX': '^NDX',
+            'QQQ': 'QQQ',
+            'GC=F': 'GC=F',
+            'GBP=X': 'GBP=X'
+        }
         
     def setup_logging(self):
         logging.basicConfig(
@@ -65,69 +72,67 @@ class MarketDataHandler:
                     else:
                         self.logger.error(f"Failed to fetch data for {symbol} after {self.max_retries} attempts: {str(e)}")
 
-    def _update_symbol_data(self, symbol: str):
-        """Update market data for a symbol"""
+    def _update_symbol_data(self, symbol: str) -> None:
+        """Update market data for a specific symbol."""
         try:
-            # Create ticker object
-            ticker = yf.Ticker(symbol)
+            # Map symbol to Yahoo Finance format
+            yahoo_symbol = self.symbol_mapping.get(symbol, symbol)
+            logging.info(f"Fetching data for {symbol} (mapped to {yahoo_symbol})")
             
-            # Get historical data - fetch 7 days of data for better analysis
-            end_time = datetime.now()
-            start_time = end_time - timedelta(days=7)
-            
-            # Try different intervals in order of preference
-            intervals = ['5m', '15m', '1h']
+            # Try different intervals to get the most recent data
+            intervals = ['5m', '15m', '1h']  # Removed 1m as it's not reliable for indices
             data = None
             
             for interval in intervals:
-                self.logger.info(f"Attempting to fetch {symbol} data with {interval} interval")
-                temp_data = ticker.history(
-                    start=start_time,
-                    end=end_time,
-                    interval=interval,
-                    prepost=True  # Include pre/post market data
-                )
-                
-                if not temp_data.empty and len(temp_data) > 50:  # Ensure we have enough data points
-                    data = temp_data
-                    self.logger.info(f"Successfully fetched {symbol} data with {interval} interval: {len(data)} candles")
-                    break
-                else:
-                    self.logger.warning(f"No data received for {symbol} with {interval} interval")
+                try:
+                    # Get data for the last 7 days to ensure we have enough data points
+                    end_date = datetime.now()
+                    start_date = end_date - timedelta(days=7)
+                    
+                    # Fetch data with the current interval
+                    temp_data = yf.download(
+                        yahoo_symbol,
+                        start=start_date,
+                        end=end_date,
+                        interval=interval,
+                        progress=False
+                    )
+                    
+                    if not temp_data.empty and len(temp_data) >= 50:
+                        data = temp_data
+                        logging.info(f"Successfully fetched {symbol} data with {interval} interval: {len(data)} candles")
+                        break
+                    else:
+                        logging.warning(f"Insufficient data for {symbol} with {interval} interval: {len(temp_data) if not temp_data.empty else 0} candles")
+                except Exception as e:
+                    logging.warning(f"Failed to fetch {symbol} data with {interval} interval: {str(e)}")
+                    continue
             
             if data is None or data.empty:
-                self.logger.error(f"Failed to get data for {symbol} with any interval")
+                logging.error(f"Failed to fetch data for {symbol} with any interval")
                 return
             
-            # Verify data quality
-            if len(data) < 50:
-                self.logger.error(f"Insufficient data points for {symbol}: {len(data)} candles")
-                return
-                
-            # Calculate weighted close
+            # Calculate weighted close and smoothed moving average
             data['hlcc4'] = (data['High'] + data['Low'] + data['Close'] + data['Close']) / 4
+            data['sma'] = data['hlcc4'].ewm(span=MA_CONFIG['period'], adjust=False).mean().shift(MA_CONFIG['shift'])
             
-            # Calculate smoothed moving average
-            data['sma'] = self._calculate_sma(data['hlcc4'])
+            # Verify data freshness
+            latest_time = data.index[-1]
+            if latest_time.tzinfo is not None:
+                latest_time = latest_time.tz_localize(None)
+            time_diff = datetime.now() - latest_time
+            if time_diff.total_seconds() > 3600:  # More than 1 hour old
+                logging.warning(f"Data for {symbol} is not recent. Latest data is from {latest_time}")
             
             # Store the data
             self.data[symbol] = data
-            self.logger.info(f"Successfully updated data for {symbol} with {len(data)} candles")
-            
-            # Log the latest price for verification
-            latest_price = data['Close'].iloc[-1]
-            self.logger.info(f"Latest price for {symbol}: {latest_price}")
+            logging.info(f"Successfully updated data for {symbol} with {len(data)} candles")
+            logging.info(f"Latest price for {symbol}: {data['Close'].iloc[-1]}")
+            logging.info(f"Data time range: {data.index[0]} to {data.index[-1]}")
             
         except Exception as e:
-            self.logger.error(f"Error updating data for {symbol}: {str(e)}")
-            raise
-
-    def _calculate_sma(self, series: pd.Series) -> pd.Series:
-        """Calculate smoothed moving average"""
-        return series.ewm(
-            span=MA_CONFIG['period'],
-            adjust=False
-        ).mean().shift(MA_CONFIG['shift'])
+            logging.error(f"Error updating data for {symbol}: {str(e)}")
+            logging.error(traceback.format_exc())
 
     def get_latest_data(self, symbol: str) -> Optional[pd.DataFrame]:
         """Get latest market data for a symbol"""
