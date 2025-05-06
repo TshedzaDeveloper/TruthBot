@@ -5,6 +5,8 @@ from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 import json
 from datetime import datetime
 from typing import Dict, List, Optional
+from market_data import MarketDataHandler
+from strategy import StrategyAnalyzer
 
 class TelegramBot:
     def __init__(self):
@@ -12,6 +14,8 @@ class TelegramBot:
         self.application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
         self.setup_handlers()
         self.stored_signals: List[Dict] = []
+        self.market_data = MarketDataHandler()
+        self.strategy = StrategyAnalyzer()
         
     def setup_logging(self):
         logging.basicConfig(
@@ -25,6 +29,7 @@ class TelegramBot:
         self.application.add_handler(CommandHandler("start", self.start_command))
         self.application.add_handler(CommandHandler("help", self.help_command))
         self.application.add_handler(CommandHandler("status", self.status_command))
+        self.application.add_handler(CommandHandler("signal", self.signal_command))
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command"""
@@ -40,7 +45,8 @@ class TelegramBot:
             "Available commands:\n"
             "/start - Start the bot\n"
             "/help - Show this help message\n"
-            "/status - Check bot status\n\n"
+            "/status - Check bot status\n"
+            "/signal - Generate trading signal\n\n"
             "The bot automatically sends trading signals when valid setups are found."
         )
         await update.message.reply_text(help_text)
@@ -55,6 +61,33 @@ class TelegramBot:
             f"📝 Last signal: {self._get_last_signal_time()}"
         )
         await update.message.reply_text(status_text)
+
+    async def signal_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /signal command"""
+        try:
+            # Get the symbol from command arguments or use default
+            symbol = context.args[0] if context.args else "XAUUSD=X"
+            
+            # Get market data
+            data = self.market_data.get_latest_data(symbol)
+            if data is None:
+                await update.message.reply_text(f"❌ No data available for {symbol}")
+                return
+            
+            # Generate signal
+            signal = self.strategy.analyze_symbol(symbol, data)
+            if signal:
+                # Format and send signal
+                message = self._format_signal_message(signal)
+                await update.message.reply_text(message, parse_mode='HTML')
+                # Store the signal
+                await self.send_signal(signal)
+            else:
+                await update.message.reply_text(f"❌ No valid setup found for {symbol}")
+                
+        except Exception as e:
+            self.logger.error(f"Error generating signal: {e}")
+            await update.message.reply_text("❌ Error generating signal. Please try again.")
 
     def _get_last_signal_time(self) -> str:
         """Get the time of the last signal"""
@@ -92,6 +125,7 @@ class TelegramBot:
     def _format_signal_message(self, signal: Dict) -> str:
         """Format the signal message with HTML"""
         emoji = "🟢" if signal['direction'] == "BUY" else "🔴"
+        confidence_emoji = "🔥" * (3 if signal['confidence'] == 'High' else 2)
         
         return (
             f"{emoji} <b>TRUTH BOT SIGNAL</b> {emoji}\n\n"
@@ -100,7 +134,7 @@ class TelegramBot:
             f"<b>Entry Price:</b> {signal['entry_price']}\n"
             f"<b>Stop Loss:</b> {signal['stop_loss']}\n"
             f"<b>Take Profit:</b> {signal['take_profit']}\n"
-            f"<b>Confidence:</b> {signal['confidence']}\n"
+            f"<b>Confidence:</b> {confidence_emoji}\n"
             f"<b>Reason:</b> {signal['reason']}\n\n"
             f"⚠️ <i>Trade at your own risk</i>"
         )
