@@ -10,6 +10,24 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 import signal
 import sys
+import os
+import atexit
+
+def check_pid(pid):
+    """Check if a process is running"""
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+def cleanup_pid_file(pid_file):
+    """Clean up PID file"""
+    try:
+        if os.path.exists(pid_file):
+            os.remove(pid_file)
+    except Exception as e:
+        logging.error(f"Error cleaning up PID file: {e}")
 
 class TruthBot:
     def __init__(self):
@@ -19,7 +37,11 @@ class TruthBot:
         self.telegram_bot = TelegramBot()
         self.running = False
         self.scheduler = AsyncIOScheduler()
+        self.pid_file = "bot.pid"
         
+        # Clean up any stale PID file at startup
+        cleanup_pid_file(self.pid_file)
+
     def setup_logging(self):
         logging.basicConfig(
             level=logging.INFO,
@@ -64,25 +86,25 @@ class TruthBot:
     async def run(self):
         """Run the bot"""
         try:
+            # Write PID file
+            with open(self.pid_file, 'w') as f:
+                f.write(str(os.getpid()))
+            
+            # Register cleanup
+            atexit.register(cleanup_pid_file, self.pid_file)
+            
             self.running = True
             
             # Setup signal handlers
             signal.signal(signal.SIGINT, self.signal_handler)
             signal.signal(signal.SIGTERM, self.signal_handler)
             
-            # Connect to market data
-            if not self.market_data.connect():
-                self.logger.error("Failed to connect to market data")
-                return
-            
-            self.logger.info("Market data connected successfully")
-            
-            # Start Telegram bot
+            # Start Telegram bot (which will also connect to market data)
             try:
                 await self.telegram_bot.start()
-                self.logger.info("Telegram bot started successfully")
+                self.logger.info("Bot started successfully")
             except Exception as e:
-                self.logger.error(f"Failed to start Telegram bot: {e}")
+                self.logger.error(f"Failed to start bot: {e}")
                 return
             
             # Configure scheduler
@@ -132,6 +154,9 @@ class TruthBot:
                 self.logger.info("Telegram bot stopped")
             except Exception as e:
                 self.logger.error(f"Error stopping Telegram bot: {e}")
+            
+            # Clean up PID file
+            cleanup_pid_file(self.pid_file)
             
             self.logger.info("Bot cleanup completed")
         except Exception as e:

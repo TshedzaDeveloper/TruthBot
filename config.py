@@ -9,11 +9,12 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
-# Trading Pairs
+# Trading pairs to monitor
 TRADING_PAIRS = [
-    "^NDX",    # NAS100 (Nasdaq-100)
-    "GC=F",    # Gold Futures
-    "GBP=X"    # GBP/USD
+    "^NDX",  # NASDAQ-100 Index
+    "QQQ",   # NASDAQ-100 ETF
+    "GC=F",  # Gold
+    "GBP=X"  # GBP/USD
 ]
 
 # Moving Average Configuration
@@ -35,8 +36,8 @@ RISK_CONFIG = {
 # Support & Resistance Configuration
 SR_CONFIG = {
     "lookback_periods": 100,  # Number of periods to look back for S/R levels
-    "min_touch_points": 3,  # Minimum number of touches to consider a level valid
-    "zone_size_pct": 0.002  # Size of the zone as percentage of price
+    "min_touch_points": 1,    # Reduced from 2 to 1 touch to consider a level valid
+    "zone_size_pct": 0.005    # Increased zone size from 0.3% to 0.5%
 }
 
 # Analysis Schedule

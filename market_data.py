@@ -39,9 +39,11 @@ class MarketDataHandler:
                 return True
             else:
                 self.logger.error("Failed to establish market data connection")
+                self.connected = False
                 return False
         except Exception as e:
             self.logger.error(f"Error connecting to market data: {str(e)}")
+            self.connected = False
             return False
 
     def _fetch_initial_data(self):
@@ -69,21 +71,39 @@ class MarketDataHandler:
             # Create ticker object
             ticker = yf.Ticker(symbol)
             
-            # Get historical data
+            # Get historical data - fetch 7 days of data for better analysis
             end_time = datetime.now()
-            start_time = end_time - timedelta(days=2)
+            start_time = end_time - timedelta(days=7)
             
-            data = ticker.history(
-                start=start_time,
-                end=end_time,
-                interval='5m',
-                prepost=True  # Include pre/post market data
-            )
+            # Try different intervals in order of preference
+            intervals = ['5m', '15m', '1h']
+            data = None
             
-            if data.empty:
-                self.logger.warning(f"No data received for {symbol}")
+            for interval in intervals:
+                self.logger.info(f"Attempting to fetch {symbol} data with {interval} interval")
+                temp_data = ticker.history(
+                    start=start_time,
+                    end=end_time,
+                    interval=interval,
+                    prepost=True  # Include pre/post market data
+                )
+                
+                if not temp_data.empty and len(temp_data) > 50:  # Ensure we have enough data points
+                    data = temp_data
+                    self.logger.info(f"Successfully fetched {symbol} data with {interval} interval: {len(data)} candles")
+                    break
+                else:
+                    self.logger.warning(f"No data received for {symbol} with {interval} interval")
+            
+            if data is None or data.empty:
+                self.logger.error(f"Failed to get data for {symbol} with any interval")
                 return
             
+            # Verify data quality
+            if len(data) < 50:
+                self.logger.error(f"Insufficient data points for {symbol}: {len(data)} candles")
+                return
+                
             # Calculate weighted close
             data['hlcc4'] = (data['High'] + data['Low'] + data['Close'] + data['Close']) / 4
             
@@ -92,6 +112,11 @@ class MarketDataHandler:
             
             # Store the data
             self.data[symbol] = data
+            self.logger.info(f"Successfully updated data for {symbol} with {len(data)} candles")
+            
+            # Log the latest price for verification
+            latest_price = data['Close'].iloc[-1]
+            self.logger.info(f"Latest price for {symbol}: {latest_price}")
             
         except Exception as e:
             self.logger.error(f"Error updating data for {symbol}: {str(e)}")
@@ -106,16 +131,29 @@ class MarketDataHandler:
 
     def get_latest_data(self, symbol: str) -> Optional[pd.DataFrame]:
         """Get latest market data for a symbol"""
-        if not self.connected:
-            self.logger.warning("Not connected to market data")
-            return None
-            
         try:
+            # Always try to reconnect if not connected
+            if not self.connected:
+                self.logger.warning("Not connected to market data, attempting to reconnect...")
+                if not self.connect():
+                    return None
+            
             # Update data before returning
             self._update_symbol_data(symbol)
+            
+            # Verify we have data
+            if symbol not in self.data or self.data[symbol] is None or len(self.data[symbol]) == 0:
+                self.logger.error(f"No data available for {symbol}")
+                return None
+                
             return self.data.get(symbol)
+            
         except Exception as e:
             self.logger.error(f"Error getting latest data for {symbol}: {str(e)}")
+            # Try to reconnect on error
+            self.connected = False
+            if self.connect():
+                return self.get_latest_data(symbol)
             return None
 
     def get_all_symbols_data(self) -> Dict[str, pd.DataFrame]:

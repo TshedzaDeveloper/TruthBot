@@ -22,17 +22,25 @@ class StrategyAnalyzer:
         """
         try:
             if data is None or len(data) < MA_CONFIG['period'] + MA_CONFIG['shift']:
+                self.logger.error(f"Insufficient data for {symbol}: {len(data) if data is not None else 0} candles")
                 return None
 
             # Get latest price and MA
             latest_price = data['hlcc4'].iloc[-1]
             latest_ma = data['sma'].iloc[-1]
             
+            # Log current analysis
+            self.logger.info(f"Analyzing {symbol}:")
+            self.logger.info(f"Latest price: {latest_price}")
+            self.logger.info(f"Latest MA: {latest_ma}")
+            
             # Check if price is above or below MA
             is_above_ma = latest_price > latest_ma
+            self.logger.info(f"Price is {'above' if is_above_ma else 'below'} MA")
             
             # Find support and resistance levels
             sr_levels = self._find_support_resistance(data)
+            self.logger.info(f"Found {len(sr_levels['support'])} support and {len(sr_levels['resistance'])} resistance levels")
             
             # Check for reversion setup
             signal = self._check_reversion_setup(
@@ -45,8 +53,10 @@ class StrategyAnalyzer:
             
             if signal:
                 signal['symbol'] = symbol
+                self.logger.info(f"Generated signal for {symbol}: {signal}")
                 return signal
                 
+            self.logger.info(f"No valid setup found for {symbol}")
             return None
             
         except Exception as e:
@@ -111,15 +121,15 @@ class StrategyAnalyzer:
             # Calculate price distance from MA
             ma_distance = abs(latest_price - latest_ma) / latest_ma
             
-            # Check if price is near MA
-            if ma_distance > 0.002:  # 0.2% threshold
+            # Check if price is near MA (increased threshold to 2%)
+            if ma_distance > 0.02:  # 2% threshold
                 return None
             
             # Determine direction and check S/R levels
             if is_above_ma:
                 # Looking for SELL signals
                 for resistance in sr_levels['resistance']:
-                    if abs(latest_price - resistance) / latest_price <= SR_CONFIG['zone_size_pct']:
+                    if abs(latest_price - resistance) / latest_price <= SR_CONFIG['zone_size_pct'] * 4:  # Quadrupled the zone size
                         return self._create_signal(
                             direction="SELL",
                             entry=latest_price,
@@ -129,7 +139,7 @@ class StrategyAnalyzer:
             else:
                 # Looking for BUY signals
                 for support in sr_levels['support']:
-                    if abs(latest_price - support) / latest_price <= SR_CONFIG['zone_size_pct']:
+                    if abs(latest_price - support) / latest_price <= SR_CONFIG['zone_size_pct'] * 4:  # Quadrupled the zone size
                         return self._create_signal(
                             direction="BUY",
                             entry=latest_price,
