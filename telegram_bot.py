@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from market_data import MarketDataHandler
 from strategy import StrategyAnalyzer
+import asyncio
 
 class TelegramBot:
     def __init__(self):
@@ -16,6 +17,7 @@ class TelegramBot:
         self.stored_signals: List[Dict] = []
         self.market_data = MarketDataHandler()
         self.strategy = StrategyAnalyzer()
+        self.is_running = False
         
     def setup_logging(self):
         logging.basicConfig(
@@ -141,11 +143,47 @@ class TelegramBot:
 
     async def start(self):
         """Start the bot"""
-        await self.application.initialize()
-        await self.application.start()
-        await self.application.updater.start_polling()
+        if self.is_running:
+            self.logger.warning("Bot is already running")
+            return
+            
+        try:
+            # Initialize application
+            await self.application.initialize()
+            await self.application.start()
+            
+            # Start polling with clean start
+            await self.application.updater.start_polling(
+                drop_pending_updates=True,
+                allowed_updates=Update.ALL_TYPES
+            )
+            
+            self.is_running = True
+            self.logger.info("Telegram bot started successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Error starting Telegram bot: {e}")
+            self.is_running = False
+            raise
 
     async def stop(self):
         """Stop the bot"""
-        await self.application.stop()
-        await self.application.shutdown() 
+        if not self.is_running:
+            return
+            
+        try:
+            # Stop polling
+            if self.application.updater.running:
+                await self.application.updater.stop()
+            
+            # Stop application
+            if self.application.running:
+                await self.application.stop()
+                await self.application.shutdown()
+            
+            self.is_running = False
+            self.logger.info("Telegram bot stopped successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Error stopping Telegram bot: {e}")
+            raise 

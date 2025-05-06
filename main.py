@@ -8,6 +8,8 @@ from telegram_bot import TelegramBot
 from config import TRADING_PAIRS, SCHEDULE_CONFIG
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+import signal
+import sys
 
 class TruthBot:
     def __init__(self):
@@ -15,7 +17,6 @@ class TruthBot:
         self.market_data = MarketDataHandler()
         self.strategy = StrategyAnalyzer()
         self.telegram_bot = TelegramBot()
-        self.last_analysis_time = {}
         self.running = False
         self.scheduler = AsyncIOScheduler()
         
@@ -55,10 +56,19 @@ class TruthBot:
         except Exception as e:
             self.logger.error(f"Error in market analysis: {e}")
 
+    def signal_handler(self, signum, frame):
+        """Handle system signals"""
+        self.logger.info(f"Received signal {signum}")
+        self.running = False
+
     async def run(self):
         """Run the bot"""
         try:
             self.running = True
+            
+            # Setup signal handlers
+            signal.signal(signal.SIGINT, self.signal_handler)
+            signal.signal(signal.SIGTERM, self.signal_handler)
             
             # Connect to market data
             if not self.market_data.connect():
@@ -68,8 +78,12 @@ class TruthBot:
             self.logger.info("Market data connected successfully")
             
             # Start Telegram bot
-            await self.telegram_bot.start()
-            self.logger.info("Telegram bot started successfully")
+            try:
+                await self.telegram_bot.start()
+                self.logger.info("Telegram bot started successfully")
+            except Exception as e:
+                self.logger.error(f"Failed to start Telegram bot: {e}")
+                return
             
             # Configure scheduler
             self.scheduler.add_job(
@@ -102,9 +116,23 @@ class TruthBot:
         """Cleanup resources"""
         try:
             self.running = False
-            self.scheduler.shutdown()
+            
+            # Stop scheduler
+            if self.scheduler.running:
+                self.scheduler.shutdown()
+                self.logger.info("Scheduler stopped")
+            
+            # Close market data connection
             self.market_data.close()
-            await self.telegram_bot.stop()
+            self.logger.info("Market data connection closed")
+            
+            # Stop Telegram bot
+            try:
+                await self.telegram_bot.stop()
+                self.logger.info("Telegram bot stopped")
+            except Exception as e:
+                self.logger.error(f"Error stopping Telegram bot: {e}")
+            
             self.logger.info("Bot cleanup completed")
         except Exception as e:
             self.logger.error(f"Error during cleanup: {e}")
@@ -119,4 +147,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logging.info("Bot stopped by user")
     except Exception as e:
-        logging.error(f"Bot stopped due to error: {e}") 
+        logging.error(f"Bot stopped due to error: {e}")
+    sys.exit(0) 
