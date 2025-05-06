@@ -13,6 +13,7 @@ class MarketDataHandler:
         self.setup_logging()
         self.max_retries = 3
         self.retry_delay = 5  # seconds
+        self.connected = False
         
     def setup_logging(self):
         logging.basicConfig(
@@ -21,11 +22,27 @@ class MarketDataHandler:
         )
         self.logger = logging.getLogger('MarketDataHandler')
 
-    def connect(self):
+    def connect(self) -> bool:
         """Initialize market data connection"""
         self.logger.info("Initializing market data connection")
-        self._fetch_initial_data()
-        return True
+        try:
+            # Test connection with a simple data fetch
+            test_symbol = TRADING_PAIRS[0]
+            ticker = yf.Ticker(test_symbol)
+            test_data = ticker.history(period='1d')
+            
+            if not test_data.empty:
+                self.logger.info("Successfully connected to market data")
+                self.connected = True
+                # Now fetch initial data for all symbols
+                self._fetch_initial_data()
+                return True
+            else:
+                self.logger.error("Failed to establish market data connection")
+                return False
+        except Exception as e:
+            self.logger.error(f"Error connecting to market data: {str(e)}")
+            return False
 
     def _fetch_initial_data(self):
         """Fetch initial data for all symbols"""
@@ -59,7 +76,8 @@ class MarketDataHandler:
             data = ticker.history(
                 start=start_time,
                 end=end_time,
-                interval='5m'
+                interval='5m',
+                prepost=True  # Include pre/post market data
             )
             
             if data.empty:
@@ -88,6 +106,10 @@ class MarketDataHandler:
 
     def get_latest_data(self, symbol: str) -> Optional[pd.DataFrame]:
         """Get latest market data for a symbol"""
+        if not self.connected:
+            self.logger.warning("Not connected to market data")
+            return None
+            
         try:
             # Update data before returning
             self._update_symbol_data(symbol)
@@ -98,6 +120,10 @@ class MarketDataHandler:
 
     def get_all_symbols_data(self) -> Dict[str, pd.DataFrame]:
         """Get latest market data for all symbols"""
+        if not self.connected:
+            self.logger.warning("Not connected to market data")
+            return {}
+            
         try:
             # Update all symbols
             for symbol in TRADING_PAIRS:
@@ -112,9 +138,10 @@ class MarketDataHandler:
 
     def is_connected(self) -> bool:
         """Check if market data is available"""
-        return len(self.data) > 0
+        return self.connected and len(self.data) > 0
 
     def close(self):
         """Clean up resources"""
         self.data.clear()
+        self.connected = False
         self.logger.info("Market data connection closed") 
