@@ -6,6 +6,8 @@ from market_data import MarketDataHandler
 from strategy import StrategyAnalyzer
 from telegram_bot import TelegramBot
 from config import TRADING_PAIRS, SCHEDULE_CONFIG
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 class TruthBot:
     def __init__(self):
@@ -15,6 +17,7 @@ class TruthBot:
         self.telegram_bot = TelegramBot()
         self.last_analysis_time = {}
         self.running = False
+        self.scheduler = AsyncIOScheduler()
         
     def setup_logging(self):
         logging.basicConfig(
@@ -35,13 +38,6 @@ class TruthBot:
             market_data = self.market_data.get_all_symbols_data()
             
             for symbol in TRADING_PAIRS:
-                # Check if enough time has passed since last analysis
-                current_time = time.time()
-                if symbol in self.last_analysis_time:
-                    time_since_last = current_time - self.last_analysis_time[symbol]
-                    if time_since_last < SCHEDULE_CONFIG['interval_minutes'] * 60:
-                        continue
-                
                 # Get data for symbol
                 data = market_data.get(symbol)
                 if data is None:
@@ -55,9 +51,6 @@ class TruthBot:
                     # Send signal via Telegram
                     await self.telegram_bot.send_signal(signal)
                     self.logger.info(f"Signal sent for {symbol}")
-                
-                # Update last analysis time
-                self.last_analysis_time[symbol] = current_time
                 
         except Exception as e:
             self.logger.error(f"Error in market analysis: {e}")
@@ -78,20 +71,26 @@ class TruthBot:
             await self.telegram_bot.start()
             self.logger.info("Telegram bot started successfully")
             
+            # Configure scheduler
+            self.scheduler.add_job(
+                self.analyze_markets,
+                CronTrigger(
+                    minute='*/15',  # Every 15 minutes
+                    day_of_week='mon-sat'  # Monday to Saturday
+                ),
+                id='market_analysis',
+                replace_existing=True
+            )
+            
+            # Start scheduler
+            self.scheduler.start()
+            self.logger.info("Scheduler started successfully")
+            
             # Run initial analysis
             await self.analyze_markets()
             
-            # Keep the bot running and analyze markets periodically
+            # Keep the bot running
             while self.running:
-                current_time = time.time()
-                for symbol in TRADING_PAIRS:
-                    if symbol not in self.last_analysis_time:
-                        await self.analyze_markets()
-                        break
-                    time_since_last = current_time - self.last_analysis_time[symbol]
-                    if time_since_last >= SCHEDULE_CONFIG['interval_minutes'] * 60:
-                        await self.analyze_markets()
-                        break
                 await asyncio.sleep(1)
                 
         except Exception as e:
@@ -103,6 +102,7 @@ class TruthBot:
         """Cleanup resources"""
         try:
             self.running = False
+            self.scheduler.shutdown()
             self.market_data.close()
             await self.telegram_bot.stop()
             self.logger.info("Bot cleanup completed")
