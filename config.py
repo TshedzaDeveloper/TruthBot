@@ -11,9 +11,9 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
 # Trading Pairs
 TRADING_PAIRS = [
-    "NDX",  # NAS100 (Nasdaq-100)
-    "GC=F",  # Gold
-    "GBPUSD=X"  # GBP/USD
+    "^NDX",    # NAS100 (Nasdaq-100)
+    "GC=F",    # Gold Futures
+    "GBP=X"    # GBP/USD
 ]
 
 # Moving Average Configuration
