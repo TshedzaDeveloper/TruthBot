@@ -23,15 +23,10 @@ class MarketDataHandler:
         self.logger = logging.getLogger('MarketDataHandler')
 
     def connect(self):
-        """Connect to Binance WebSocket"""
+        """Connect to TradingView WebSocket"""
         websocket.enableTrace(True)
-        
-        # Create WebSocket URL with all symbols
-        streams = [f"{symbol.lower()}@kline_1d" for symbol in TRADING_PAIRS]
-        ws_url = f"wss://stream.binance.com:9443/stream?streams={'/'.join(streams)}"
-        
         self.ws = websocket.WebSocketApp(
-            ws_url,
+            "wss://data.tradingview.com/socket.io/websocket",
             on_message=self._on_message,
             on_error=self._on_error,
             on_close=self._on_close,
@@ -47,8 +42,7 @@ class MarketDataHandler:
         """Handle incoming WebSocket messages"""
         try:
             data = json.loads(message)
-            if 'data' in data:
-                self._process_market_data(data['data'])
+            self._process_market_data(data)
         except Exception as e:
             self.logger.error(f"Error processing message: {e}")
 
@@ -66,33 +60,33 @@ class MarketDataHandler:
         """Handle WebSocket connection open"""
         self.logger.info("WebSocket connection established")
         self.connected = True
+        self._subscribe_to_symbols()
+
+    def _subscribe_to_symbols(self):
+        """Subscribe to market data for configured symbols"""
+        for symbol in TRADING_PAIRS:
+            subscribe_msg = {
+                "m": "chart_add_symbol",
+                "p": [symbol, "1D"]
+            }
+            self.ws.send(json.dumps(subscribe_msg))
 
     def _process_market_data(self, data: Dict):
         """Process incoming market data"""
         try:
-            symbol = data['s']  # Symbol
-            kline = data['k']   # Kline/Candlestick data
-            
-            if symbol in TRADING_PAIRS:
-                # Convert Binance data to our format
-                candle_data = {
-                    'timestamp': kline['t'],
-                    'open': float(kline['o']),
-                    'high': float(kline['h']),
-                    'low': float(kline['l']),
-                    'close': float(kline['c']),
-                    'volume': float(kline['v'])
-                }
-                self._update_symbol_data(symbol, candle_data)
+            if "p" in data and len(data["p"]) > 1:
+                symbol = data["p"][0]
+                if symbol in TRADING_PAIRS:
+                    self._update_symbol_data(symbol, data["p"][1])
         except Exception as e:
             self.logger.error(f"Error processing market data: {e}")
 
     def _update_symbol_data(self, symbol: str, data: Dict):
         """Update stored data for a symbol"""
         try:
-            # Create DataFrame from single candle
-            df = pd.DataFrame([data])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df = pd.DataFrame(data)
+            df.columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
             df.set_index('timestamp', inplace=True)
             
             # Calculate weighted close
@@ -101,14 +95,7 @@ class MarketDataHandler:
             # Calculate smoothed moving average
             df['sma'] = self._calculate_sma(df['hlcc4'])
             
-            # Update or initialize symbol data
-            if symbol in self.data:
-                self.data[symbol] = pd.concat([self.data[symbol], df])
-                # Keep only last 1000 candles
-                self.data[symbol] = self.data[symbol].tail(1000)
-            else:
-                self.data[symbol] = df
-                
+            self.data[symbol] = df
         except Exception as e:
             self.logger.error(f"Error updating symbol data for {symbol}: {e}")
 

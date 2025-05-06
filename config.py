@@ -10,7 +10,11 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
 # Trading Pairs
-TRADING_PAIRS = ["NAS100", "XAUUSD", "GBPUSD"]
+TRADING_PAIRS = [
+    "OANDA:NAS100USD",  # NAS100
+    "OANDA:XAUUSD",     # Gold
+    "OANDA:GBPUSD"      # GBP/USD
+]
 
 # Moving Average Configuration
 MA_CONFIG = {
