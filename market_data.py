@@ -5,11 +5,14 @@ from typing import Dict, List, Optional
 import logging
 from config import TRADING_PAIRS, MA_CONFIG
 import time
+from datetime import datetime, timedelta
 
 class MarketDataHandler:
     def __init__(self):
         self.data: Dict[str, pd.DataFrame] = {}
         self.setup_logging()
+        self.max_retries = 3
+        self.retry_delay = 5  # seconds
         
     def setup_logging(self):
         logging.basicConfig(
@@ -27,22 +30,36 @@ class MarketDataHandler:
     def _fetch_initial_data(self):
         """Fetch initial data for all symbols"""
         for symbol in TRADING_PAIRS:
-            try:
-                self._update_symbol_data(symbol)
-                self.logger.info(f"Successfully fetched initial data for {symbol}")
-            except Exception as e:
-                self.logger.error(f"Error fetching initial data for {symbol}: {e}")
+            success = False
+            retries = 0
+            
+            while not success and retries < self.max_retries:
+                try:
+                    self._update_symbol_data(symbol)
+                    self.logger.info(f"Successfully fetched initial data for {symbol}")
+                    success = True
+                except Exception as e:
+                    retries += 1
+                    if retries < self.max_retries:
+                        self.logger.warning(f"Retry {retries}/{self.max_retries} for {symbol}: {str(e)}")
+                        time.sleep(self.retry_delay)
+                    else:
+                        self.logger.error(f"Failed to fetch data for {symbol} after {self.max_retries} attempts: {str(e)}")
 
     def _update_symbol_data(self, symbol: str):
         """Update market data for a symbol"""
         try:
-            # Download data with 5-minute intervals for the last 2 days
-            # This ensures we have enough data for calculations
-            data = yf.download(
-                symbol,
-                interval='5m',
-                period='2d',
-                progress=False
+            # Create ticker object
+            ticker = yf.Ticker(symbol)
+            
+            # Get historical data
+            end_time = datetime.now()
+            start_time = end_time - timedelta(days=2)
+            
+            data = ticker.history(
+                start=start_time,
+                end=end_time,
+                interval='5m'
             )
             
             if data.empty:
@@ -59,7 +76,8 @@ class MarketDataHandler:
             self.data[symbol] = data
             
         except Exception as e:
-            self.logger.error(f"Error updating data for {symbol}: {e}")
+            self.logger.error(f"Error updating data for {symbol}: {str(e)}")
+            raise
 
     def _calculate_sma(self, series: pd.Series) -> pd.Series:
         """Calculate smoothed moving average"""
@@ -75,7 +93,7 @@ class MarketDataHandler:
             self._update_symbol_data(symbol)
             return self.data.get(symbol)
         except Exception as e:
-            self.logger.error(f"Error getting latest data for {symbol}: {e}")
+            self.logger.error(f"Error getting latest data for {symbol}: {str(e)}")
             return None
 
     def get_all_symbols_data(self) -> Dict[str, pd.DataFrame]:
@@ -83,10 +101,13 @@ class MarketDataHandler:
         try:
             # Update all symbols
             for symbol in TRADING_PAIRS:
-                self._update_symbol_data(symbol)
+                try:
+                    self._update_symbol_data(symbol)
+                except Exception as e:
+                    self.logger.error(f"Error updating {symbol}: {str(e)}")
             return self.data
         except Exception as e:
-            self.logger.error(f"Error getting all symbols data: {e}")
+            self.logger.error(f"Error getting all symbols data: {str(e)}")
             return {}
 
     def is_connected(self) -> bool:
